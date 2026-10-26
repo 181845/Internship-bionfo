@@ -1,2 +1,76 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+#!/usr/bin/env python3
+"""Summarise sequences in a FASTA file: length, GC content, base composition."""
+
+import argparse
+import csv
+import sys
+from collections import Counter
+
+
+def read_fasta(handle):
+    """Yield (header, sequence) for each record in an open FASTA file."""
+    header, chunks = None, []
+    for line in handle:
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith(">"):
+            if header is not None:
+                yield header, "".join(chunks)
+            header, chunks = line[1:], []
+        else:
+            if header is None:
+                raise ValueError("Not a FASTA file: sequence found before first '>' header")
+            chunks.append(line)
+    if header is not None:
+        yield header, "".join(chunks)
+
+
+def summarise(header, seq):
+    """Return a dict of basic properties for one sequence."""
+    seq = seq.upper().replace("U", "T")
+    counts = Counter(seq)
+    length = len(seq)
+    a, c, g, t, n = (counts[b] for b in "ACGTN")
+    other = length - (a + c + g + t + n)
+    acgt = a + c + g + t
+    gc = 100 * (g + c) / acgt if acgt else 0.0
+    return {
+        "id": header.split()[0],
+        "length": length,
+        "gc_percent": round(gc, 2),
+        "A": a, "C": c, "G": g, "T": t, "N": n, "other": other,
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("fasta", help="path to a FASTA file")
+    parser.add_argument("--csv", help="also write results to this CSV file")
+    args = parser.parse_args()
+
+    with open(args.fasta) as handle:
+        rows = [summarise(h, s) for h, s in read_fasta(handle)]
+
+    if not rows:
+        sys.exit("No sequences found in file.")
+
+    cols = list(rows[0].keys())
+    print("\t".join(cols))
+    for r in rows:
+        print("\t".join(str(r[c]) for c in cols))
+
+    total = sum(r["length"] for r in rows)
+    print(f"\n{len(rows)} sequence(s), {total} bases in total", file=sys.stderr)
+
+    if args.csv:
+        with open(args.csv, "w", newline="") as out:
+            writer = csv.DictWriter(out, fieldnames=cols)
+            writer.writeheader()
+            writer.writerows(rows)
+
+
+if __name__ == "__main__":
+    main()
